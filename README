@@ -1,0 +1,236 @@
+NAME
+    Regexp::Exhaustive - Find all possible matches, including backtracked
+    and overlapping, of a pattern against a string
+
+SYNOPSIS
+        use Regexp::Exhaustive;
+
+        my @matches = Regexp::Exhaustive->new('abc' => qr/.+?/)->all;
+
+        my $matcher = Regexp::Exhaustive->new('abc' => qr/.+?/);
+        while (my ($match) = $matcher->next) {
+            print "$match\n";
+        }
+
+        __END__
+        a
+        ab
+        abc
+        b
+        bc
+        c
+
+DESCRIPTION
+    This module does an exhaustive match of a pattern against a string. That
+    means that it will match all ways possible, including all backtracked
+    and overlapping matches.
+
+    The main advantage this module provides is the iterator interface. It
+    enables you to have arbitrary code between each match without loading
+    every match into the memory first. The price you pay for this is
+    efficiency, as the regex engine has to do extra work to resume the
+    matching at the right place.
+
+    As a convenience the "all" method is provided. Currently it isn't just
+    convenient though. It's also more efficient than iterating through the
+    matches using "next". This may change though.
+
+    This is an initial release, and many things may change for the next
+    version. If you feel something is missing or poorly designed, now is the
+    time to voice your opinion.
+
+METHODS
+  For "Regexp::Exhaustive"
+    $matcher = Regexp::Exhaustive->new($str => qr/$pattern/)
+        "new" creates a new "Regexp::Exhaustive" object. The first argument
+        is a string and the second is a "qr//" object.
+
+        Do not change the string while using this object or any associated
+        match objects. Copy the string first if you plan to use. That's
+        easily done by quoting it in the call:
+
+            my $matcher = Regexp::Exhaustive->new("$str" => qr/$pattern/);
+
+        Currently the behaviours of "(?{})" and "(??{})" assertions in a
+        pattern given to "Regexp::Exhaustive" are undefined.
+
+    $clone = $matcher->clone
+        Creates a clone of $matcher. Note that $str still will be
+        referenced.
+
+    $match = $matcher->next
+        Returns a match object for the next match. If there's no such match
+        then "undef" is returned in scalar context and the empty list in
+        list context.
+
+    @matches = $matcher->all
+        Generates and returns all matches in list context. Returns the
+        number of matches in scalar context. This method may interfere with
+        the "next" method, so if you mix "next" and "all", call "all" on a
+        clone:
+
+            my @matches = $matcher->clone->all;
+
+  For the match object
+    Match objects are overloaded to return the matched string (the value of
+    method "match").
+
+    $match->var('$SPECIAL_VARIABLE');
+        Returns the value of $SPECIAL_VARIABLE associated with the match.
+        Arrays return their elements in list context and their sizes in
+        scalar context. Supported variables:
+
+            Punctuation:    English:
+            $<*digits*>
+            $&              $MATCH
+            $`              $PREMATCH
+            $'              $POSTMATCH
+            $+              $LAST_PAREN_MATCH
+            $^N
+            @+              @LAST_MATCH_END
+            @-              @LAST_MATCH_START
+            $^R             $LAST_REGEXP_CODE_RESULT
+
+        Example:
+
+            my $str = 'asdf';
+            my $match = Regexp::Exhaustive::->new($str => qr/.(.)/)->next;
+
+            print $match->var('$1'), "\n";
+            print $match->var('$POSTMATCH'), "\n";
+            print join(' ', $match->var('@-')), "\n";
+
+            __END__
+            s
+            df
+            0 1
+
+    $match->prematch
+        Returns the equivalent of $`.
+
+    $match->match
+        Returns the equivalent of $&.
+
+    $match->postmatch
+        Returns the equivalent of $'.
+
+    $match->group($n)
+        Returns the $n:th capturing group. Equivalent to "$<*digits*>". $n
+        must be strictly positive.
+
+    $match->groups
+        Returns all capturing groups in list context. Returns the number of
+        groups in scalar context.
+
+    $match->pos
+        Returns the equivalent of "pos($str)".
+
+DIAGNOSTICS
+    The second argument to Regexp::Exhaustive->new() must be a Regexp (qr//)
+    object
+        (F) Self-explanatory.
+
+EXAMPLES
+  Finding all divisors
+    A commonly known snippet of regex can be used to find out if an integer
+    is a prime number or not.
+
+        sub is_prime {
+            my ($n) = @_;
+
+            my $str = '.' x $n;
+
+            return $str =~ /^(?:..+)\1+$/ ? 0 : 1;
+        }
+
+        print '9 is prime: ', is_prime(9), "\n";
+        print '11 is prime: ', is_prime(11), "\n";
+
+        __END__
+        9 is prime: 0
+        11 is prime: 1
+
+    Equally simple is it, with "Regexp::Exhaustive", to find out not only if
+    it's a prime number, but which its divisors are.
+
+        use Regexp::Exhaustive;
+
+        sub divisors {
+            my ($i) = @_;
+
+            return
+                map length $_->group(1),
+                    Regexp::Exhaustive::
+                        ->new('.' x $i => qr/^(.+?)\1*$/)
+                        ->all
+            ;
+        }
+
+        print "$_\n" for divisors(12);
+
+        __END__
+        1
+        2
+        3
+        4
+        6
+        12
+
+  Finding the cross product
+    Set::CrossProduct gives you the cross product of a set, and that's the
+    good way of doing just that. But as an example, here's how you can find
+    all possible combinations of two four-sided dice using
+    "Regexp::Exhaustive". To illustrate the difference between greedy and
+    non-greedy matches I let the second die be in reversed order.
+
+        use Regexp::Exhaustive;
+
+        my $sides = '1234';
+        my $matcher = Regexp::Exhaustive::->new(
+            "$sides\n$sides" => qr/^.*?(.).*\n.*(.)/
+        );
+
+        while (my ($match) = $matcher->next) {
+            print $match->groups, "\n";
+        }
+
+        __END__
+        14
+        13
+        12
+        11
+        24
+        23
+        22
+        21
+        34
+        33
+        32
+        31
+        44
+        43
+        42
+        41
+
+  Finding all subsets
+    See "SYNOPSIS".
+
+WARNING
+    This module uses the experimental "(?{ code })" and
+    "(?(condition)yes-pattern|no-pattern))" assertions. Thus this module is
+    as experimental as those assertions.
+
+AUTHOR
+    Johan Lodin <lodin@cpan.org>
+
+COPYRIGHT
+    Copyright 2005-2007 Johan Lodin. All rights reserved.
+
+    This library is free software; you can redistribute it and/or modify it
+    under the same terms as Perl itself.
+
+SEE ALSO
+    perlre for regular expressions.
+
+    perlvar for the special variables.
+

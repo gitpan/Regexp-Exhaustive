@@ -1,0 +1,20 @@
+Changes
+LICENSE
+MANIFEST
+Makefile.PL
+README
+lib/Regexp/Exhaustive.pm
+t/010basic.t
+t/020interface.t
+t/030next.t
+t/031clone.t
+t/032all.t
+t/050pos.t
+t/098security.t
+t/099copy.t
+t/matchobjs/020interface.t
+t/matchobjs/030implicit.t
+t/matchobjs/031.t
+t/matchobjs/032vars.t
+t/matchobjs/040embedded.t
+META.yml                                 Module meta-data (added by MakeMaker)
