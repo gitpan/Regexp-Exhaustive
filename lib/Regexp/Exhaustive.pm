@@ -1,243 +1,72 @@
-{
-    package Regexp::Exhaustive;
-    use 5.006001;
+package Regexp::Exhaustive;
+use 5.006001;
 
-    $VERSION = 0.01;
+$VERSION = 0.02;
 
-    use strict;
-    use Carp;
-    use Scalar::Util qw/ blessed /;
+use base 'Exporter';
+@EXPORT_OK = qw/ exhaustive /;
+$EXPORT_TAGS{ALL} = \@EXPORT_OK;
 
-    ###########################################################################
-    # Constructor                                                             #
-    ###########################################################################
+use strict;
+use Carp;
+use Scalar::Util qw/ blessed reftype /;
 
-    sub new {
-        my $self = bless {} => shift;
-        my $str_ref = \$_[0];
-        my (undef, $pattern, $p) = @_;
+my $Unique = 0;
+our $Vars;
+our $Count;
+our @Matches;
+sub exhaustive {
+    my $str_ref = \shift;
+    my $re = shift;
+    local $Vars = @_ ? \@_ : undef;
 
-        blessed($pattern) && $pattern->isa('Regexp')
-            or croak("The second argument to @{[__PACKAGE__]}->new() must be a Regexp (qr//) object");
+    blessed($re) && $re->isa('Regexp')
+        or croak("The second argument to @{[__PACKAGE__]}::exhaustive must be a Regexp (qr//) object");
 
-        %$self = (
-            str_ref => $str_ref,
-            orig_pattern => $pattern,
-            pattern => _gen_pattern($pattern),
-            pos => 0,
-            count => 0,
-        );
+    local $Count = 0;
+    local @Matches;
+    my $save_match;
+    {
+        use re 'eval';
+        if (wantarray) {
+            if ($Vars) {
+                my @vars = map {
+                    ! ref $Vars->[$_]               ? "     \$Vars->[$_]   " :
+                    reftype($Vars->[$_]) eq 'ARRAY' ? "[ \@{\$Vars->[$_]} ]" :
+                    reftype($Vars->[$_]) eq 'HASH'  ? "{ \%{\$Vars->[$_]} }" :
+                    croak("Unknown variable type for variable $_ in call to @{[__PACKAGE__]}::exhaustive");
+                } 0 .. $#$Vars;
 
-        return $self;
-    }
+                my $vars = join ',', @vars;
+                $vars = "[ $vars ]" if @vars > 1;
 
-    ###########################################################################
-    # Methods                                                                 #
-    ###########################################################################
+                my $pattern = "(?{push \@Matches, $vars})";
 
-    sub clone {
-        my $self = shift;
-
-        my $clone = bless { %$self }, ref $self;
-        $clone->{pattern} = _gen_pattern($self->{orig_pattern});
-
-        return $clone;
-    }
-
-    sub next {
-        my $self = shift;
-
-        my $oldp = pos ${$self->{str_ref}};
-        {
-            pos(${$self->{str_ref}}) = $self->{pos};
-
-            #print $self->{pattern}, "\n";
-            #use Data::Dumper; print Dumper($self->{pattern}), "\n";
-            #print blessed($self->{pattern}), "\n";
-
-            local our $curr_c = -1;
-            my $backtrack = do {
-                use re 'eval';
-                qr/
-                    (?(?{++$curr_c < $self->{count}})
-                        (?!)
-                    )
-                /x;
-            };
-
-            my $match =
-                ${$self->{str_ref}} =~ /
-                    \G
-                    $self->{pattern}
-                    $backtrack
-                /gx
-                ? Regexp::Exhaustive::_Match->new(${$self->{str_ref}})
-                : undef
-            ;
-
-            if (defined $match) {
-                $self->{count}++;
-
-                pos(${$self->{str_ref}}) = $oldp;
-
-                # This is the "real" return statement.
-                return $match;
+                $save_match = qr/$pattern/;
             }
             else {
-                $self->{pos}++;
-
-                if ($self->{pos} > length ${$self->{str_ref}}) {
-                    # There's no more matches. Stop searching.
-                    last;
-                }
-
-                $self->{count} = 0;
-                redo;
+                $save_match = qr/
+                    (?{
+                        $Vars ||= eval 'sub { \\@_ }->(' . (join(',', map "\$$_", 1 .. $#+) || '$&') .')';
+                        push @Matches, @$Vars == 1 ? $Vars->[0] : [ @$Vars ];
+                    })
+                /x;
             }
         }
-
-        pos(${$self->{str_ref}}) = $oldp;
-        return;
+        else {
+            $save_match = qr/(?{$Count++})/;
+        }
     }
 
-    sub all {
-        my $self = shift;
+    $Unique++;
+    $$str_ref =~ /
+        (?:$Unique){0} # I don't understand why $Unique is needed to
+        $re            # make qr[.*] work. Do you?
+        $save_match
+        (?!)
+    /x;
 
-        my $str_ref = $self->{str_ref};
-        my $re = $self->{pattern};
-
-        my @matches;
-        my $save_match = do {
-            use re 'eval';
-            qr/(?{push @matches, Regexp::Exhaustive::_Match->new($$str_ref)})/;
-        };
-
-        $$str_ref =~ /$re$save_match(?!)/;
-
-        return @matches;
-    }
-
-    ###########################################################################
-    # Help subroutines                                                        #
-    ###########################################################################
-
-    # The $Unique thing is a workaround. If there are two identical qr//
-    # objects, like $re1 = qr/./ and $re2 = qr/./ the //g match in &next
-    # gets confused. Therefore I need to create unique objects. Hopefully
-    # the extra string in the pattern makes the pattern unique.
-    my $Unique = 0;
-    sub _gen_pattern {
-        my ($pattern) = @_;
-
-        $Unique++;
-        return qr/(?:@{[__PACKAGE__]}::_$Unique){0}$pattern/;
-    }
-}
-{
-    package Regexp::Exhaustive::_Match;
-
-    use strict;
-    use overload
-        '""' => sub { $_[0]->match },
-        fallback => 1,
-    ;
-
-    use Carp;
-
-    # OBS: &new may not directly or indirectly use any regular expressions,
-    # so that patterns that use this class inside a (?{}) still works.
-    sub new {
-        my $self = bless {} => shift;
-        my $str_ref = \shift;
-
-        %$self = (
-            str_ref => $str_ref,
-
-            '$+'  => $+,
-            '$^N' => $^N,
-            '$^R' => $^R,
-            '@+'  => [ @+ ],
-            '@-'  => [ @- ],
-
-            'pos' => pos($$str_ref),
-        );
-
-        return $self;
-    }
-
-    sub prematch {
-        my $self = shift;
-
-        return substr(${$self->{str_ref}}, 0, $self->{'@-'}->[0]);
-    }
-
-    sub match { $_[0]->group(0) }
-
-    sub postmatch {
-        my $self = shift;
-
-        return substr(${$self->{str_ref}}, $self->{'@+'}->[0]);
-    }
-
-    sub group {
-        my $self = shift;
-        my ($n) = @_;
-
-        defined $self->{'@-'}->[$n]
-            or return undef;
-
-        return substr(${$self->{str_ref}}, $self->{'@-'}->[$n], $self->{'@+'}->[$n] - $self->{'@-'}->[$n]);
-    }
-
-    sub groups {
-        my $self = shift;
-
-        my $groups = $#{$self->{'@-'}};
-
-        return wantarray
-            ? map $self->group($_), 1 .. $groups
-            : $groups;
-    }
-
-    sub pos { $_[0]->{pos} }
-
-    my %methods = (
-        q{$&} => sub { $_[0]->match },
-        q{$`} => sub { $_[0]->prematch },
-        q{$'} => sub { $_[0]->postmatch },
-
-        '$+'  => sub { $_[0]->{'$+'}  },
-        '$^N' => sub { $_[0]->{'$^N'} },
-        '$^R' => sub { $_[0]->{'$^R'} },
-
-        '@+' => sub { @{$_[0]->{'@+'}} },
-        '@-' => sub { @{$_[0]->{'@-'}} },
-    );
-    my %aliases = qw/
-        $MATCH                      $&
-        $PREMATCH                   $`
-        $POSTMATCH                  $'
-
-        $LAST_PAREN_MATCH           $+
-        $LAST_REGEXP_CODE_RESULT    $^R
-
-        @LAST_MATCH_END             @+
-        @LAST_MATCH_START           @-
-    /;
-    $methods{$_} = $methods{$aliases{$_}}
-        for keys %aliases;
-
-    sub var {
-        my $self = shift;
-        my ($var) = @_;
-
-        my $method = $methods{$var} ||= $var =~ s/\$(?=([^\D0]\d*)\z)//
-            ? sub { $_[0]->group($var) }
-            : undef
-                or croak(__PACKAGE__ . ": No such variable \"$var\"");
-
-        return $self->$method;
-    }
+    return wantarray ? @Matches : $Count;
 }
 
 1;
@@ -251,125 +80,126 @@ Regexp::Exhaustive - Find all possible matches, including backtracked and overla
 
 =head1 SYNOPSIS
 
-    use Regexp::Exhaustive;
+    use Regexp::Exhaustive qw/ exhaustive /;
 
-    my @matches = Regexp::Exhaustive->new('abc' => qr/.+?/)->all;
+    print "Subsets:\n";
+    print "$_\n" for exhaustive('abc' => qr/.+/);
 
-    my $matcher = Regexp::Exhaustive->new('abc' => qr/.+?/);
-    while (my ($match) = $matcher->next) {
-        print "$match\n";
-    }
+    print "\n";
+
+    print "Overlapping matching:\n";
+    print "$_\n" for exhaustive('abc' => qr/(?>.+)/);
+
+    print "\n";
+
+    print "Heads and tails:\n";
+    print "@$_\n" for exhaustive('abcde' => qr/^(.+?)(.+)\z/);
+
+    print "\n";
+
+    print "Triplets:\n";
+    print "@$_\n" for exhaustive('abcde' => qr/(.)(.)(.)/);
+
+    print "\n";
+
+    print "Binary count:\n";
+    print map(length, @$_), "\n"
+        for exhaustive('111', qr/^(.??)(.??)(.??)/);
 
     __END__
-    a
-    ab
+    Subsets:
     abc
+    ab
+    a
+    bc
     b
+    c
+
+    Overlapping matching:
+    abc
     bc
     c
 
+    Heads and tails:
+    a bcde
+    ab cde
+    abc de
+    abcd e
+
+    Triplets:
+    a b c
+    b c d
+    c d e
+
+    Binary count:
+    000
+    001
+    010
+    011
+    100
+    101
+    110
+    111
 
 =head1 DESCRIPTION
 
 This module does an exhaustive match of a pattern against a string. That means that it will match all ways possible, including all backtracked and overlapping matches.
 
-The main advantage this module provides is the iterator interface. It enables you to have arbitrary code between each match without loading every match into the memory first. The price you pay for this is efficiency, as the regex engine has to do extra work to resume the matching at the right place.
+It works a lot like the familiar C<m//g> regarding return values.
 
-As a convenience the C<all> method is provided. Currently it isn't just convenient though. It's also more efficient than iterating through the matches using C<next>. This may change though.
+Beware that exhaustive matching may generate a very large number of matches. If you only need overlapping matches that's easily achieved. Overlapping matching has a maximum number of matches being the length of the string plus one.
 
 This is an initial release, and many things may change for the next version. If you feel something is missing or poorly designed, now is the time to voice your opinion.
 
 
-=head1 METHODS
+=head1 EXPORTED FUNCTIONS
 
-=head2 For C<Regexp::Exhaustive>
-
-=over
-
-=item $matcher = Regexp::Exhaustive->new($str => qr/$pattern/)
-
-C<new> creates a new C<Regexp::Exhaustive> object. The first argument is a string and the second is a C<qr//> object.
-
-Do not change the string while using this object or any associated match objects. Copy the string first if you plan to use. That's easily done by quoting it in the call:
-
-    my $matcher = Regexp::Exhaustive->new("$str" => qr/$pattern/);
-
-Currently the behaviours of C<(?{})> and C<(??{})> assertions in a pattern given to C<Regexp::Exhaustive> are undefined.
-
-=item $clone = $matcher->clone
-
-Creates a clone of C<$matcher>. Note that C<$str> still will be referenced.
-
-=item $match = $matcher->next
-
-Returns a match object for the next match. If there's no such match then C<undef> is returned in scalar context and the empty list in list context.
-
-=item @matches = $matcher->all
-
-Generates and returns all matches in list context. Returns the number of matches in scalar context. This method may interfere with the C<next> method, so if you mix C<next> and C<all>, call C<all> on a clone:
-
-    my @matches = $matcher->clone->all;
-
-=back
-
-=head2 For the match object
-
-Match objects are overloaded to return the matched string (the value of method C<match>).
+Nothing is exported by default. The C<:ALL> tag exports everything that can be exported.
 
 =over
 
-=item $match->var('$SPECIAL_VARIABLE');
+=item exhaustive(STRING => qr/PATTERN/)
 
-Returns the value of C<$SPECIAL_VARIABLE> associated with the match. Arrays return their elements in list context and their sizes in scalar context. Supported variables:
+Exhaustively generates and returns all matches in list context. Returns the number of matches in scalar context.
 
-    Punctuation:    English:
-    $<*digits*>
-    $&              $MATCH
-    $`              $PREMATCH
-    $'              $POSTMATCH
-    $+              $LAST_PAREN_MATCH
-    $^N
-    @+              @LAST_MATCH_END
-    @-              @LAST_MATCH_START
-    $^R             $LAST_REGEXP_CODE_RESULT
+If the pattern doesn't contain any capturing subpatterns, the matched string (C<$&>) is returned. If only one capturing subpattern is seen (C<$1>), that is returned. Otherwise C<$1>, C<$2>, etc is returned grouped using array references.
 
-Example:
+This is like C<m//g> in list context, except C<m//g> returns all capturing subpatterns as a flat list.
 
-    my $str = 'asdf';
-    my $match = Regexp::Exhaustive::->new($str => qr/.(.)/)->next;
+This method does not effect C<pos($str)>.
 
-    print $match->var('$1'), "\n";
-    print $match->var('$POSTMATCH'), "\n";
-    print join(' ', $match->var('@-')), "\n";
+=item exhaustive(STRING => qr/PATTERN/, $1, $2, $+, $^R, \@+, ...)
 
-    __END__
-    s
-    df
-    0 1
+Optionally, you can specify which variables to return. If C<@-> and/or C<@+> is used they must be passed as references, and will end up as array references in the return list.
 
-=item $match->prematch
+If two or more variables are specified they will be grouped using array references.
 
-Returns the equivalent of C<$`>.
+Beware, not using any capturing group will make C<$&> be used, with all the usual caveats.
 
-=item $match->match
+=item overlapping(STRING => qr/PATTERN/)
 
-Returns the equivalent of C<$&>.
+If this function would exist, but it doesn't, it would be like global but try to match from every position of the string. It's like an exhaustive match that doesn't backtrack inside the pattern.
 
-=item $match->postmatch
+This function doesn't exist because it isn't needed. Instead use
 
-Returns the equivalent of C<$'>.
+    exhaustive(STRING => qr/(?>PATTERN)/)
 
-=item $match->group($n)
+i.e. wrap the pattern with the C<< (?>...) >> assertion. This will lock the match once the pattern has matched, forcing the regex engine to skip behind the pattern when backtracking, thus moving forward on string for the next match.
 
-Returns the C<$n>:th capturing group. Equivalent to C<< $<*digits*> >>. C<$n> must be strictly positive.
+Using
 
-=item $match->groups
+    STRING =~ /(?=PATTERN)/g
 
-Returns all capturing groups in list context. Returns the number of groups in scalar context.
+will be faster, but has three key differences: (1) assumes C<pos()> is undefined, (2) undefines C<pos()>, and (3) returns all captured groups as a flat list. Note that saving away C<pos()> and then restoring it may cause certain global matches to loop infinitely.
 
-=item $match->pos
+    $_ = 'foo';
 
-Returns the equivalent of C<pos($str)>.
+    while (/.??/g) {
+        print pos();
+        pos() = pos(); # Not really doing anything, or is it?
+    }
+
+This will loop forever.
 
 =back
 
@@ -378,7 +208,7 @@ Returns the equivalent of C<pos($str)>.
 
 =over
 
-=item The second argument to Regexp::Exhaustive->new() must be a Regexp (qr//) object
+=item The second argument to Regexp::Exhaustive::exhaustive must be a Regexp (qr//) object
 
 (F) Self-explanatory.
 
@@ -386,6 +216,8 @@ Returns the equivalent of C<pos($str)>.
 
 
 =head1 EXAMPLES
+
+See L</"SYNOPSIS"> for more examples.
 
 =head2 Finding all divisors
 
@@ -413,12 +245,7 @@ Equally simple is it, with C<Regexp::Exhaustive>, to find out not only if it's a
     sub divisors {
         my ($i) = @_;
 
-        return
-            map length $_->group(1),
-                Regexp::Exhaustive::
-                    ->new('.' x $i => qr/^(.+?)\1*$/)
-                    ->all
-        ;
+        return map length, exhaustive('.' x $i => qr/^(.+?)\1*$/);
     }
 
     print "$_\n" for divisors(12);
@@ -438,13 +265,13 @@ L<Set::CrossProduct|Set::CrossProduct> gives you the cross product of a set, and
     use Regexp::Exhaustive;
 
     my $sides = '1234';
-    my $matcher = Regexp::Exhaustive::->new(
-        "$sides\n$sides" => qr/^.*?(.).*\n.*(.)/
+    my @sets = exhaustive(
+        "$sides\n$sides"
+        =>
+        qr/^.*?(.).*\n.*(.)/)
     );
 
-    while (my ($match) = $matcher->next) {
-        print $match->groups, "\n";
-    }
+    print "@$_\n" for @sets;
 
     __END__
     14
@@ -464,14 +291,33 @@ L<Set::CrossProduct|Set::CrossProduct> gives you the cross product of a set, and
     42
     41
 
-=head2 Finding all subsets
+=head2 N-ary count
 
-See L</SYNOPSIS>.
+Using C<Regexp::Exhaustive> you can generate all values of a certain digit length using an n-ary count. This is demonstrated for binary numbers with a length of three.
+
+    sub all_values {
+        my ($n, @base) = @_;
+        my $str = (join('', @base) . "\n") x $n;
+        my $re = ".*?(.).*\n" x $n;
+        return map { join '', @$_ } exhaustive($str, qr/^$re/);
+    }
+
+    print "$_\n" for all_values(3, qw/ 0 1 /);
+
+    __END__
+    000
+    001
+    010
+    011
+    100
+    101
+    110
+    111
 
 
 =head1 WARNING
 
-This module uses the experimental C<(?{ code })> and C<(?(condition)yes-pattern|no-pattern))> assertions. Thus this module is as experimental as those assertions.
+This module uses the experimental C<(?{ ... })> assertion. Thus this module is as experimental as that assertion.
 
 
 =head1 AUTHOR

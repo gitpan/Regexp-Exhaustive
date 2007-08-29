@@ -3,134 +3,152 @@ NAME
     and overlapping, of a pattern against a string
 
 SYNOPSIS
-        use Regexp::Exhaustive;
+        use Regexp::Exhaustive qw/ exhaustive /;
 
-        my @matches = Regexp::Exhaustive->new('abc' => qr/.+?/)->all;
+        print "Subsets:\n";
+        print "$_\n" for exhaustive('abc' => qr/.+/);
 
-        my $matcher = Regexp::Exhaustive->new('abc' => qr/.+?/);
-        while (my ($match) = $matcher->next) {
-            print "$match\n";
-        }
+        print "\n";
+
+        print "Overlapping matching:\n";
+        print "$_\n" for exhaustive('abc' => qr/(?>.+)/);
+
+        print "\n";
+
+        print "Heads and tails:\n";
+        print "@$_\n" for exhaustive('abcde' => qr/^(.+?)(.+)\z/);
+
+        print "\n";
+
+        print "Triplets:\n";
+        print "@$_\n" for exhaustive('abcde' => qr/(.)(.)(.)/);
+
+        print "\n";
+
+        print "Binary count:\n";
+        print map(length, @$_), "\n"
+            for exhaustive('111', qr/^(.??)(.??)(.??)/);
 
         __END__
-        a
-        ab
+        Subsets:
         abc
+        ab
+        a
+        bc
         b
+        c
+
+        Overlapping matching:
+        abc
         bc
         c
+
+        Heads and tails:
+        a bcde
+        ab cde
+        abc de
+        abcd e
+
+        Triplets:
+        a b c
+        b c d
+        c d e
+
+        Binary count:
+        000
+        001
+        010
+        011
+        100
+        101
+        110
+        111
 
 DESCRIPTION
     This module does an exhaustive match of a pattern against a string. That
     means that it will match all ways possible, including all backtracked
     and overlapping matches.
 
-    The main advantage this module provides is the iterator interface. It
-    enables you to have arbitrary code between each match without loading
-    every match into the memory first. The price you pay for this is
-    efficiency, as the regex engine has to do extra work to resume the
-    matching at the right place.
+    It works a lot like the familiar "m//g" regarding return values.
 
-    As a convenience the "all" method is provided. Currently it isn't just
-    convenient though. It's also more efficient than iterating through the
-    matches using "next". This may change though.
+    Beware that exhaustive matching may generate a very large number of
+    matches. If you only need overlapping matches that's easily achieved.
+    Overlapping matching has a maximum number of matches being the length of
+    the string plus one.
 
     This is an initial release, and many things may change for the next
     version. If you feel something is missing or poorly designed, now is the
     time to voice your opinion.
 
-METHODS
-  For "Regexp::Exhaustive"
-    $matcher = Regexp::Exhaustive->new($str => qr/$pattern/)
-        "new" creates a new "Regexp::Exhaustive" object. The first argument
-        is a string and the second is a "qr//" object.
+EXPORTED FUNCTIONS
+    Nothing is exported by default. The ":ALL" tag exports everything that
+    can be exported.
 
-        Do not change the string while using this object or any associated
-        match objects. Copy the string first if you plan to use. That's
-        easily done by quoting it in the call:
+    exhaustive(STRING => qr/PATTERN/)
+        Exhaustively generates and returns all matches in list context.
+        Returns the number of matches in scalar context.
 
-            my $matcher = Regexp::Exhaustive->new("$str" => qr/$pattern/);
+        If the pattern doesn't contain any capturing subpatterns, the
+        matched string ($&) is returned. If only one capturing subpattern is
+        seen ($1), that is returned. Otherwise $1, $2, etc is returned
+        grouped using array references.
 
-        Currently the behaviours of "(?{})" and "(??{})" assertions in a
-        pattern given to "Regexp::Exhaustive" are undefined.
+        This is like "m//g" in list context, except "m//g" returns all
+        capturing subpatterns as a flat list.
 
-    $clone = $matcher->clone
-        Creates a clone of $matcher. Note that $str still will be
-        referenced.
+        This method does not effect "pos($str)".
 
-    $match = $matcher->next
-        Returns a match object for the next match. If there's no such match
-        then "undef" is returned in scalar context and the empty list in
-        list context.
+    exhaustive(STRING => qr/PATTERN/, $1, $2, $+, $^R, \@+, ...)
+        Optionally, you can specify which variables to return. If "@-"
+        and/or "@+" is used they must be passed as references, and will end
+        up as array references in the return list.
 
-    @matches = $matcher->all
-        Generates and returns all matches in list context. Returns the
-        number of matches in scalar context. This method may interfere with
-        the "next" method, so if you mix "next" and "all", call "all" on a
-        clone:
+        If two or more variables are specified they will be grouped using
+        array references.
 
-            my @matches = $matcher->clone->all;
+        Beware, not using any capturing group will make $& be used, with all
+        the usual caveats.
 
-  For the match object
-    Match objects are overloaded to return the matched string (the value of
-    method "match").
+    overlapping(STRING => qr/PATTERN/)
+        If this function would exist, but it doesn't, it would be like
+        global but try to match from every position of the string. It's like
+        an exhaustive match that doesn't backtrack inside the pattern.
 
-    $match->var('$SPECIAL_VARIABLE');
-        Returns the value of $SPECIAL_VARIABLE associated with the match.
-        Arrays return their elements in list context and their sizes in
-        scalar context. Supported variables:
+        This function doesn't exist because it isn't needed. Instead use
 
-            Punctuation:    English:
-            $<*digits*>
-            $&              $MATCH
-            $`              $PREMATCH
-            $'              $POSTMATCH
-            $+              $LAST_PAREN_MATCH
-            $^N
-            @+              @LAST_MATCH_END
-            @-              @LAST_MATCH_START
-            $^R             $LAST_REGEXP_CODE_RESULT
+            exhaustive(STRING => qr/(?>PATTERN)/)
 
-        Example:
+        i.e. wrap the pattern with the "(?>...)" assertion. This will lock
+        the match once the pattern has matched, forcing the regex engine to
+        skip behind the pattern when backtracking, thus moving forward on
+        string for the next match.
 
-            my $str = 'asdf';
-            my $match = Regexp::Exhaustive::->new($str => qr/.(.)/)->next;
+        Using
 
-            print $match->var('$1'), "\n";
-            print $match->var('$POSTMATCH'), "\n";
-            print join(' ', $match->var('@-')), "\n";
+            STRING =~ /(?=PATTERN)/g
 
-            __END__
-            s
-            df
-            0 1
+        will be faster, but has three key differences: (1) assumes "pos()"
+        is undefined, (2) undefines "pos()", and (3) returns all captured
+        groups as a flat list. Note that saving away "pos()" and then
+        restoring it may cause certain global matches to loop infinitely.
 
-    $match->prematch
-        Returns the equivalent of $`.
+            $_ = 'foo';
 
-    $match->match
-        Returns the equivalent of $&.
+            while (/.??/g) {
+                print pos();
+                pos() = pos(); # Not really doing anything, or is it?
+            }
 
-    $match->postmatch
-        Returns the equivalent of $'.
-
-    $match->group($n)
-        Returns the $n:th capturing group. Equivalent to "$<*digits*>". $n
-        must be strictly positive.
-
-    $match->groups
-        Returns all capturing groups in list context. Returns the number of
-        groups in scalar context.
-
-    $match->pos
-        Returns the equivalent of "pos($str)".
+        This will loop forever.
 
 DIAGNOSTICS
-    The second argument to Regexp::Exhaustive->new() must be a Regexp (qr//)
-    object
+    The second argument to Regexp::Exhaustive::exhaustive must be a Regexp
+    (qr//) object
         (F) Self-explanatory.
 
 EXAMPLES
+    See "SYNOPSIS" for more examples.
+
   Finding all divisors
     A commonly known snippet of regex can be used to find out if an integer
     is a prime number or not.
@@ -158,12 +176,7 @@ EXAMPLES
         sub divisors {
             my ($i) = @_;
 
-            return
-                map length $_->group(1),
-                    Regexp::Exhaustive::
-                        ->new('.' x $i => qr/^(.+?)\1*$/)
-                        ->all
-            ;
+            return map length, exhaustive('.' x $i => qr/^(.+?)\1*$/);
         }
 
         print "$_\n" for divisors(12);
@@ -186,13 +199,13 @@ EXAMPLES
         use Regexp::Exhaustive;
 
         my $sides = '1234';
-        my $matcher = Regexp::Exhaustive::->new(
-            "$sides\n$sides" => qr/^.*?(.).*\n.*(.)/
+        my @sets = exhaustive(
+            "$sides\n$sides"
+            =>
+            qr/^.*?(.).*\n.*(.)/)
         );
 
-        while (my ($match) = $matcher->next) {
-            print $match->groups, "\n";
-        }
+        print "@$_\n" for @sets;
 
         __END__
         14
@@ -212,13 +225,33 @@ EXAMPLES
         42
         41
 
-  Finding all subsets
-    See "SYNOPSIS".
+  N-ary count
+    Using "Regexp::Exhaustive" you can generate all values of a certain
+    digit length using an n-ary count. This is demonstrated for binary
+    numbers with a length of three.
+
+        sub all_values {
+            my ($n, @base) = @_;
+            my $str = (join('', @base) . "\n") x $n;
+            my $re = ".*?(.).*\n" x $n;
+            return map { join '', @$_ } exhaustive($str, qr/^$re/);
+        }
+
+        print "$_\n" for all_values(3, qw/ 0 1 /);
+
+        __END__
+        000
+        001
+        010
+        011
+        100
+        101
+        110
+        111
 
 WARNING
-    This module uses the experimental "(?{ code })" and
-    "(?(condition)yes-pattern|no-pattern))" assertions. Thus this module is
-    as experimental as those assertions.
+    This module uses the experimental "(?{ ... })" assertion. Thus this
+    module is as experimental as that assertion.
 
 AUTHOR
     Johan Lodin <lodin@cpan.org>

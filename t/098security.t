@@ -2,10 +2,10 @@ use Test::More tests => 2 + 2 + 2;
 BEGIN { $^W = 1 }
 use strict;
 
-my $CLASS = 'Regexp::Exhaustive';
+my $module = 'Regexp::Exhaustive';
 
-require_ok($CLASS);
-use_ok($CLASS);
+require_ok($module);
+use_ok($module, 'exhaustive');
 
 {
     package Regexp::Fake;
@@ -25,8 +25,8 @@ use_ok($CLASS);
     my $fake = Regexp::Fake::->new($pat);
     is("$fake", $pat);
 
-    my $m = $CLASS->new($str => $fake);
-    is($m->next, 'a');
+    my @matches = exhaustive($str => $fake);
+    is_deeply(\@matches, [qw/ a b c /]);
 }
 {
     my $str = 'abc';
@@ -35,6 +35,6 @@ use_ok($CLASS);
     is("$fake", '(?{1})');
 
     my $msg = "Eval-group not allowed at runtime";
-    eval { $CLASS->new($str => $fake) };
+    eval { exhaustive($str => $fake) };
     like($@, qr/\Q$msg/, $msg);
 }

@@ -1,5 +1,8 @@
 Revision history for Perl module Regexp::Exhaustive
 
+0.02 2007-08-29
+    - Complete redesign.
+
 0.01 2007-08-25
     - CPAN release.
 
