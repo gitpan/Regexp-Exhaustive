@@ -53,6 +53,7 @@ use_ok($module, 'exhaustive');
     is($count, @facit);
 }
 {
+
     my $str = '1234';
     my $re = qr/(?:(.))??/;
     my $count  = exhaustive($str => qr/$re/);

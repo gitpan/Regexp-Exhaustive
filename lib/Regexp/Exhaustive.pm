@@ -1,7 +1,7 @@
 package Regexp::Exhaustive;
 use 5.006001;
 
-$VERSION = 0.02;
+$VERSION = 0.03;
 
 use base 'Exporter';
 @EXPORT_OK = qw/ exhaustive /;
@@ -9,46 +9,85 @@ $EXPORT_TAGS{ALL} = \@EXPORT_OK;
 
 use strict;
 use Carp;
-use Scalar::Util qw/ blessed reftype /;
+use Scalar::Util qw/ blessed /;
+use warnings ();
+
+use vars qw/ $Vars $Count @Matches /;
+
+my %Translate = (
+    q[$`]  => 'substr($$str_ref, 0, $-[0])',
+    q[$&]  => 'substr($$str_ref, $-[0], $+[0] - $-[0])',
+    q[$']  => 'substr($$str_ref, $+[0])',
+    q[$+]  => '$+',
+    q[$^N] => '$^N',
+    q[@-]  => '[ @- ]',
+    q[@+]  => '[ @+ ]',
+    q[%-]  => '{ %- }',
+    q[%+]  => '{ %+ }',
+    q[$^R] => '$^R',
+);
+
+my %Aliases = qw/
+    $PREMATCH                   $`
+    $MATCH                      $&
+    $POSTMATCH                  $'
+    $LAST_PAREN_MATCH           $+
+    $LAST_REGEXP_CODE_RESULT    $^R
+    @LAST_MATCH_START           @-
+    @LAST_MATCH_END             @+
+/;
 
 my $Unique = 0;
-our $Vars;
-our $Count;
-our @Matches;
 sub exhaustive {
     my $str_ref = \shift;
     my $re = shift;
-    local $Vars = @_ ? \@_ : undef;
+    my @vars = @_;
+
+    defined $$str_ref
+        or warnings::warnif(uninitialized => "Use of uninitialized value in &@{[__PACKAGE__]}::exhaustive");
 
     blessed($re) && $re->isa('Regexp')
-        or croak("The second argument to @{[__PACKAGE__]}::exhaustive must be a Regexp (qr//) object");
+        or croak("The second argument to &@{[__PACKAGE__]}::exhaustive must be a Regexp object (qr//)");
 
+    for (@vars) {
+        defined
+            or croak("Uninitialized value passed to &@{[__PACKAGE__]}::exhaustive as variable name");
+
+        $_ = $Aliases{$_} if exists $Aliases{$_};
+    }
+
+    if (my @bad = grep { not $Translate{$_} || /^\$[1-9]\d?\z/ } @vars) {
+        $_ = qq{"$_"} for @bad;
+        my $s = @bad >= 2 ? 's' : '';
+        croak("Bad variable name$s to &@{[__PACKAGE__]}::exhaustive: " . join ', ', @bad);
+    }
+
+    local $Vars;
     local $Count = 0;
     local @Matches;
     my $save_match;
     {
-        use re 'eval';
         if (wantarray) {
-            if ($Vars) {
-                my @vars = map {
-                    ! ref $Vars->[$_]               ? "     \$Vars->[$_]   " :
-                    reftype($Vars->[$_]) eq 'ARRAY' ? "[ \@{\$Vars->[$_]} ]" :
-                    reftype($Vars->[$_]) eq 'HASH'  ? "{ \%{\$Vars->[$_]} }" :
-                    croak("Unknown variable type for variable $_ in call to @{[__PACKAGE__]}::exhaustive");
-                } 0 .. $#$Vars;
-
-                my $vars = join ',', @vars;
+            if (@vars) {
+                my $vars = join ',', map { $Translate{$_} || $_ } @vars;
                 $vars = "[ $vars ]" if @vars > 1;
 
-                my $pattern = "(?{push \@Matches, $vars})";
-
+                use re 'eval';
+                my $pattern = "(?{push \@Matches, $vars})"; # So $vars interpolates.
                 $save_match = qr/$pattern/;
             }
             else {
                 $save_match = qr/
                     (?{
-                        $Vars ||= eval 'sub { \\@_ }->(' . (join(',', map "\$$_", 1 .. $#+) || '$&') .')';
-                        push @Matches, @$Vars == 1 ? $Vars->[0] : [ @$Vars ];
+                        $Vars ||= $#+
+                            ? eval 'sub { \\@_ }->(' . join(',', map "\$$_", 1 .. $#+) .')'
+                            : []
+                        ;
+                        push @Matches,
+                            @$Vars == 1 ? $Vars->[0] :
+                            @$Vars >  1 ? [ @$Vars ] :
+                                substr($$str_ref, $-[0], $+[0] - $-[0])
+                        ;
                     })
                 /x;
             }
@@ -162,23 +201,50 @@ Nothing is exported by default. The C<:ALL> tag exports everything that can be e
 
 Exhaustively generates and returns all matches in list context. Returns the number of matches in scalar context.
 
-If the pattern doesn't contain any capturing subpatterns, the matched string (C<$&>) is returned. If only one capturing subpattern is seen (C<$1>), that is returned. Otherwise C<$1>, C<$2>, etc is returned grouped using array references.
+If the pattern doesn't contain any capturing subpatterns, the matched string (equivalent of C<$&>) is returned. If only one capturing subpattern is seen then C<$1> is returned. Otherwise C<$1>, C<$2>, etc is returned grouped using array references.
 
 This is like C<m//g> in list context, except C<m//g> returns all capturing subpatterns as a flat list.
 
-This method does not effect C<pos($str)>.
+This method does not interact with C<pos($str)> and can be safely intermixed with other match operations against the string.
 
-=item exhaustive(STRING => qr/PATTERN/, $1, $2, $+, $^R, \@+, ...)
+Worthy to note is that it's much more efficient to use C<qr/(.)/> than C<qr/./>, i.e. making direct use of C<$1> instead of having C<&exhaustive> calculate C<$&>.
 
-Optionally, you can specify which variables to return. If C<@-> and/or C<@+> is used they must be passed as references, and will end up as array references in the return list.
+=item exhaustive(STRING => qr/PATTERN/, qw[ $1 $2 @- $^R ... ])
+
+Optionally, you can specify which variables to return. Arrays and hashes will end up as references in the return list.
 
 If two or more variables are specified they will be grouped using array references.
 
-Beware, not using any capturing group will make C<$&> be used, with all the usual caveats.
+    my @matches = exhaustive('abc' => qr/(a)|(b)/, qw/ $1 $2 $+ /);
+
+    for (@matches) {
+        print join("\t", map { defined() ? $_ : 'undef' } @$_) . "\n";
+    }
+
+    __END__
+    a       undef   a
+    undef   b       b
+
+Supported variables:
+
+    Punctuation:    English alias:
+    $<*digits*>
+    $`              $PREMATCH
+    $&              $MATCH
+    $'              $POSTMATCH
+    $+              $LAST_PAREN_MATCH
+    $^N
+    @+              @LAST_MATCH_END
+    @-              @LAST_MATCH_START
+    %-
+    %+
+    $^R             $LAST_REGEXP_CODE_RESULT
+
+Using C<$`>, C<$&>, and C<$'> with C<&exhaustive> doesn't impose the performance penalty that those variables otherwise impose. However, they're usually slower to use than rewriting the pattern to use capturing subpatterns. In particular, C<$&> is often easy to avoid by just adding an outer capturing parenthesis and using C<$1> instead.
 
 =item overlapping(STRING => qr/PATTERN/)
 
-If this function would exist, but it doesn't, it would be like global but try to match from every position of the string. It's like an exhaustive match that doesn't backtrack inside the pattern.
+If this function would exist, but it doesn't, it would be like global match but try to match from every position of the string. It's like an exhaustive match that doesn't backtrack inside the pattern.
 
 This function doesn't exist because it isn't needed. Instead use
 
@@ -190,7 +256,7 @@ Using
 
     STRING =~ /(?=PATTERN)/g
 
-will be faster, but has three key differences: (1) assumes C<pos()> is undefined, (2) undefines C<pos()>, and (3) returns all captured groups as a flat list. Note that saving away C<pos()> and then restoring it may cause certain global matches to loop infinitely.
+will be faster, but has three key differences: (1) assumes C<pos()> is undefined, (2) undefines C<pos()>, and (3) returns all captured subpatterns as a flat list. Note that saving away C<pos()> and then restoring it may cause certain global matches to loop infinitely.
 
     $_ = 'foo';
 
@@ -208,9 +274,21 @@ This will loop forever.
 
 =over
 
-=item The second argument to Regexp::Exhaustive::exhaustive must be a Regexp (qr//) object
+=item Use of uninitialized value in &Regexp::Exhaustive::exhaustive
+
+(W|uninitialized) The string given to &exhaustive was not defined.
+
+=item The second argument to &Regexp::Exhaustive::exhaustive must be a Regexp object (qr//)
 
 (F) Self-explanatory.
+
+=item Uninitialized value passed to &Regexp::Exhaustive::exhaustive as variable name
+
+(F) An argument for a regex variable name was not defined.
+
+=item Bad variable name(s) to &Regexp::Exhaustive::exhaustive: %s
+
+(F) You supplied a string that didn't look like a known regex variable. See C<&exhaustive> for supported variables.
 
 =back
 
@@ -240,7 +318,7 @@ A commonly known snippet of regex can be used to find out if an integer is a pri
 
 Equally simple is it, with C<Regexp::Exhaustive>, to find out not only if it's a prime number, but which its divisors are.
 
-    use Regexp::Exhaustive;
+    use Regexp::Exhaustive 'exhaustive';
 
     sub divisors {
         my ($i) = @_;
@@ -262,38 +340,40 @@ Equally simple is it, with C<Regexp::Exhaustive>, to find out not only if it's a
 
 L<Set::CrossProduct|Set::CrossProduct> gives you the cross product of a set, and that's the good way of doing just that. But as an example, here's how you can find all possible combinations of two four-sided dice using C<Regexp::Exhaustive>. To illustrate the difference between greedy and non-greedy matches I let the second die be in reversed order.
 
-    use Regexp::Exhaustive;
+    use Regexp::Exhaustive 'exhaustive';
 
     my $sides = '1234';
     my @sets = exhaustive(
         "$sides\n$sides"
         =>
-        qr/^.*?(.).*\n.*(.)/)
+        qr/^.*?(.).*\n.*(.)/
     );
 
     print "@$_\n" for @sets;
 
     __END__
-    14
-    13
-    12
-    11
-    24
-    23
-    22
-    21
-    34
-    33
-    32
-    31
-    44
-    43
-    42
-    41
+    1 4
+    1 3
+    1 2
+    1 1
+    2 4
+    2 3
+    2 2
+    2 1
+    3 4
+    3 3
+    3 2
+    3 1
+    4 4
+    4 3
+    4 2
+    4 1
 
 =head2 N-ary count
 
 Using C<Regexp::Exhaustive> you can generate all values of a certain digit length using an n-ary count. This is demonstrated for binary numbers with a length of three.
+
+    use Regexp::Exhaustive 'exhaustive';
 
     sub all_values {
         my ($n, @base) = @_;
@@ -318,6 +398,11 @@ Using C<Regexp::Exhaustive> you can generate all values of a certain digit lengt
 =head1 WARNING
 
 This module uses the experimental C<(?{ ... })> assertion. Thus this module is as experimental as that assertion.
+
+
+=head1 ACKNOWLEDGEMENTS
+
+Thanks to Mike Rosulek for giving useful feedback and suggestions.
 
 
 =head1 AUTHOR

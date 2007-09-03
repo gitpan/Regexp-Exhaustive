@@ -89,30 +89,63 @@ EXPORTED FUNCTIONS
         Returns the number of matches in scalar context.
 
         If the pattern doesn't contain any capturing subpatterns, the
-        matched string ($&) is returned. If only one capturing subpattern is
-        seen ($1), that is returned. Otherwise $1, $2, etc is returned
-        grouped using array references.
+        matched string (equivalent of $&) is returned. If only one capturing
+        subpattern is seen then $1 is returned. Otherwise $1, $2, etc is
+        returned grouped using array references.
 
         This is like "m//g" in list context, except "m//g" returns all
         capturing subpatterns as a flat list.
 
-        This method does not effect "pos($str)".
+        This method does not interact with "pos($str)" and can be safely
+        intermixed with other match operations against the string.
 
-    exhaustive(STRING => qr/PATTERN/, $1, $2, $+, $^R, \@+, ...)
-        Optionally, you can specify which variables to return. If "@-"
-        and/or "@+" is used they must be passed as references, and will end
-        up as array references in the return list.
+        Worthy to note is that it's much more efficient to use "qr/(.)/"
+        than "qr/./", i.e. making direct use of $1 instead of having
+        &exhaustive calculate $&.
+
+    exhaustive(STRING => qr/PATTERN/, qw[ $1 $2 @- $^R ... ])
+        Optionally, you can specify which variables to return. Arrays and
+        hashes will end up as references in the return list.
 
         If two or more variables are specified they will be grouped using
         array references.
 
-        Beware, not using any capturing group will make $& be used, with all
-        the usual caveats.
+            my @matches = exhaustive('abc' => qr/(a)|(b)/, qw/ $1 $2 $+ /);
+
+            for (@matches) {
+                print join("\t", map { defined() ? $_ : 'undef' } @$_) . "\n";
+            }
+
+            __END__
+            a       undef   a
+            undef   b       b
+
+        Supported variables:
+
+            Punctuation:    English alias:
+            $<*digits*>
+            $`              $PREMATCH
+            $&              $MATCH
+            $'              $POSTMATCH
+            $+              $LAST_PAREN_MATCH
+            $^N
+            @+              @LAST_MATCH_END
+            @-              @LAST_MATCH_START
+            %-
+            %+
+            $^R             $LAST_REGEXP_CODE_RESULT
+
+        Using $`, $&, and $' with &exhaustive doesn't impose the performance
+        penalty that those variables otherwise impose. However, they're
+        usually slower to use than rewriting the pattern to use capturing
+        subpatterns. In particular, $& is often easy to avoid by just adding
+        an outer capturing parenthesis and using $1 instead.
 
     overlapping(STRING => qr/PATTERN/)
         If this function would exist, but it doesn't, it would be like
-        global but try to match from every position of the string. It's like
-        an exhaustive match that doesn't backtrack inside the pattern.
+        global match but try to match from every position of the string.
+        It's like an exhaustive match that doesn't backtrack inside the
+        pattern.
 
         This function doesn't exist because it isn't needed. Instead use
 
@@ -129,7 +162,7 @@ EXPORTED FUNCTIONS
 
         will be faster, but has three key differences: (1) assumes "pos()"
         is undefined, (2) undefines "pos()", and (3) returns all captured
-        groups as a flat list. Note that saving away "pos()" and then
+        subpatterns as a flat list. Note that saving away "pos()" and then
         restoring it may cause certain global matches to loop infinitely.
 
             $_ = 'foo';
@@ -142,9 +175,20 @@ EXPORTED FUNCTIONS
         This will loop forever.
 
 DIAGNOSTICS
-    The second argument to Regexp::Exhaustive::exhaustive must be a Regexp
-    (qr//) object
+    Use of uninitialized value in &Regexp::Exhaustive::exhaustive
+        (W|uninitialized) The string given to &exhaustive was not defined.
+
+    The second argument to &Regexp::Exhaustive::exhaustive must be a Regexp
+    object (qr//)
         (F) Self-explanatory.
+
+    Uninitialized value passed to &Regexp::Exhaustive::exhaustive as
+    variable name
+        (F) An argument for a regex variable name was not defined.
+
+    Bad variable name(s) to &Regexp::Exhaustive::exhaustive: %s
+        (F) You supplied a string that didn't look like a known regex
+        variable. See &exhaustive for supported variables.
 
 EXAMPLES
     See "SYNOPSIS" for more examples.
@@ -171,7 +215,7 @@ EXAMPLES
     Equally simple is it, with "Regexp::Exhaustive", to find out not only if
     it's a prime number, but which its divisors are.
 
-        use Regexp::Exhaustive;
+        use Regexp::Exhaustive 'exhaustive';
 
         sub divisors {
             my ($i) = @_;
@@ -196,39 +240,41 @@ EXAMPLES
     "Regexp::Exhaustive". To illustrate the difference between greedy and
     non-greedy matches I let the second die be in reversed order.
 
-        use Regexp::Exhaustive;
+        use Regexp::Exhaustive 'exhaustive';
 
         my $sides = '1234';
         my @sets = exhaustive(
             "$sides\n$sides"
             =>
-            qr/^.*?(.).*\n.*(.)/)
+            qr/^.*?(.).*\n.*(.)/
         );
 
         print "@$_\n" for @sets;
 
         __END__
-        14
-        13
-        12
-        11
-        24
-        23
-        22
-        21
-        34
-        33
-        32
-        31
-        44
-        43
-        42
-        41
+        1 4
+        1 3
+        1 2
+        1 1
+        2 4
+        2 3
+        2 2
+        2 1
+        3 4
+        3 3
+        3 2
+        3 1
+        4 4
+        4 3
+        4 2
+        4 1
 
   N-ary count
     Using "Regexp::Exhaustive" you can generate all values of a certain
     digit length using an n-ary count. This is demonstrated for binary
     numbers with a length of three.
+
+        use Regexp::Exhaustive 'exhaustive';
 
         sub all_values {
             my ($n, @base) = @_;
@@ -252,6 +298,9 @@ EXAMPLES
 WARNING
     This module uses the experimental "(?{ ... })" assertion. Thus this
     module is as experimental as that assertion.
+
+ACKNOWLEDGEMENTS
+    Thanks to Mike Rosulek for giving useful feedback and suggestions.
 
 AUTHOR
     Johan Lodin <lodin@cpan.org>

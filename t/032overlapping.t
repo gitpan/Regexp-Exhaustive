@@ -17,7 +17,7 @@ use_ok($module, 'exhaustive');
     is_deeply(\@result, \@facit);
 }
 {
-    my @result = exhaustive('1234' => qr/(?>(?:))/);
+    my @result = exhaustive('1234' => qr/(?>)/);
     my @facit = ('') x 5;
     is_deeply(\@result, \@facit);
 }
