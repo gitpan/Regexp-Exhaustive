@@ -76,7 +76,7 @@ DESCRIPTION
     Overlapping matching has a maximum number of matches being the length of
     the string plus one.
 
-    This is an initial release, and many things may change for the next
+    This is an initial release, and some things may change for the next
     version. If you feel something is missing or poorly designed, now is the
     time to voice your opinion.
 
@@ -84,7 +84,7 @@ EXPORTED FUNCTIONS
     Nothing is exported by default. The ":ALL" tag exports everything that
     can be exported.
 
-    exhaustive(STRING => qr/PATTERN/)
+    "exhaustive(STRING => qr/PATTERN/)"
         Exhaustively generates and returns all matches in list context.
         Returns the number of matches in scalar context.
 
@@ -101,9 +101,9 @@ EXPORTED FUNCTIONS
 
         Worthy to note is that it's much more efficient to use "qr/(.)/"
         than "qr/./", i.e. making direct use of $1 instead of having
-        &exhaustive calculate $&.
+        "exhaustive" calculate $&.
 
-    exhaustive(STRING => qr/PATTERN/, qw[ $1 $2 @- $^R ... ])
+    "exhaustive(STRING => qr/PATTERN/, qw[ $1 $2 @- $^R ... ])"
         Optionally, you can specify which variables to return. Arrays and
         hashes will end up as references in the return list.
 
@@ -129,19 +129,19 @@ EXPORTED FUNCTIONS
             $'              $POSTMATCH
             $+              $LAST_PAREN_MATCH
             $^N
-            @+              @LAST_MATCH_END
             @-              @LAST_MATCH_START
+            @+              @LAST_MATCH_END
             %-
             %+
             $^R             $LAST_REGEXP_CODE_RESULT
 
-        Using $`, $&, and $' with &exhaustive doesn't impose the performance
-        penalty that those variables otherwise impose. However, they're
-        usually slower to use than rewriting the pattern to use capturing
-        subpatterns. In particular, $& is often easy to avoid by just adding
-        an outer capturing parenthesis and using $1 instead.
+        Using $`, $&, and $' with "exhaustive" doesn't impose the
+        performance penalty that those variables otherwise impose. However,
+        they're usually slower to use than rewriting the pattern to use
+        capturing subpatterns. In particular, $& is often easy to avoid by
+        just adding an outer capturing parenthesis and using $1 instead.
 
-    overlapping(STRING => qr/PATTERN/)
+    "overlapping(STRING => qr/PATTERN/)"
         If this function would exist, but it doesn't, it would be like
         global match but try to match from every position of the string.
         It's like an exhaustive match that doesn't backtrack inside the
@@ -154,7 +154,7 @@ EXPORTED FUNCTIONS
         i.e. wrap the pattern with the "(?>...)" assertion. This will lock
         the match once the pattern has matched, forcing the regex engine to
         skip behind the pattern when backtracking, thus moving forward on
-        string for the next match.
+        the string for the next match.
 
         Using
 
@@ -176,7 +176,7 @@ EXPORTED FUNCTIONS
 
 DIAGNOSTICS
     Use of uninitialized value in &Regexp::Exhaustive::exhaustive
-        (W|uninitialized) The string given to &exhaustive was not defined.
+        (W|uninitialized) The string given to "exhaustive" was not defined.
 
     The second argument to &Regexp::Exhaustive::exhaustive must be a Regexp
     object (qr//)
@@ -188,7 +188,7 @@ DIAGNOSTICS
 
     Bad variable name(s) to &Regexp::Exhaustive::exhaustive: %s
         (F) You supplied a string that didn't look like a known regex
-        variable. See &exhaustive for supported variables.
+        variable. See "exhaustive" for supported variables.
 
 EXAMPLES
     See "SYNOPSIS" for more examples.
@@ -272,14 +272,15 @@ EXAMPLES
   N-ary count
     Using "Regexp::Exhaustive" you can generate all values of a certain
     digit length using an n-ary count. This is demonstrated for binary
-    numbers with a length of three.
+    numbers with a length of three. (The length is assumed to be greater
+    than one.)
 
         use Regexp::Exhaustive 'exhaustive';
 
         sub all_values {
             my ($n, @base) = @_;
             my $str = (join('', @base) . "\n") x $n;
-            my $re = ".*?(.).*\n" x $n;
+            my $re = qr/.*?(.).*\n/ x $n;
             return map { join '', @$_ } exhaustive($str, qr/^$re/);
         }
 

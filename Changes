@@ -1,5 +1,9 @@
 Revision history for Perl module Regexp::Exhaustive
 
+0.04 2008-01-06
+    - Now handles a new Perl 5.10 warning.
+    - Minor POD changes.
+
 0.03 2007-09-03
     - Minor interface redesign.
 
